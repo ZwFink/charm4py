@@ -2,6 +2,10 @@ from . import wait
 import sys
 from greenlet import getcurrent
 from collections import defaultdict
+import inspect
+import numpy as np
+import zfpy
+from dataclasses import dataclass
 
 # A Chare class defined by a user can be used in 3 ways: (1) as a Mainchare, (2) to form Groups,
 # (3) to form Arrays. To achieve this, Charm4py can register with the Charm++ library up to 3
@@ -14,6 +18,14 @@ CHARM_TYPES = (MAINCHARE, GROUP, ARRAY)
 (CONTRIBUTOR_TYPE_ARRAY,
  CONTRIBUTOR_TYPE_GROUP,
  CONTRIBUTOR_TYPE_NODEGROUP) = range(3)
+
+@dataclass
+class CompressionMetadata:
+    compressible_idxes: list[int]
+    tolerance: float
+    rate: float
+    precision: float
+    size_threshold: int
 
 
 class Chare(object):
@@ -713,7 +725,36 @@ def array_proxy_elem(proxy, idx):  # array proxy [] overload method
             assert _slice.start is not None and _slice.stop is not None, 'Must specify start and stop indexes for array slicing'
         return charm.split(proxy, 1, slicing=idx)[0]
 
-def array_proxy_method_gen(ep, argcount, argnames, defaults):  # decorator, generates proxy entry methods
+def argument_compress(*wrap_args, tolerance = -1, rate = -1, precision = -1,
+                      size_threshold = -1
+                      ):
+    compressible_idxes = list()
+    def wrap(em):
+        sig = inspect.signature(em)
+        params = sig.parameters
+
+        for idx, p in enumerate(sig.parameters):
+            type_anno = sig.parameters[p].annotation
+            if type_anno in wrap_args:
+                # -1 because we don't want to include 'self'
+                compressible_idxes.append(idx-1)
+        def _lossy_compress(*args, **kwargs):
+            arg_list = list(args)
+            for l in compressible_idxes:
+                # we have to account for the offset
+                arg_list[l+1] = zfpy.decompress_numpy(args[l+1])#, tolerance = tolerance,
+                                                  #rate = rate,
+                                                  #precision = precision
+                                                  #)
+            print("ARG LIST:",arg_list, "on pe", charm.myPe())
+            return em(*arg_list, **kwargs)
+        _lossy_compress.compression_data = CompressionMetadata(compressible_idxes,
+                                                               tolerance, rate, precision,
+                                                               size_threshold
+                                                               )
+        return _lossy_compress
+    return wrap
+def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data):  # decorator, generates proxy entry methods
     def proxy_entry_method(proxy, *args, **kwargs):
         num_args = len(args)
         if num_args < argcount and len(kwargs) > 0:
@@ -747,7 +788,14 @@ def array_proxy_method_gen(ep, argcount, argnames, defaults):  # decorator, gene
                 array = charm.arrays[aid]
                 if elemIdx in array:
                     destObj = array[elemIdx]
-            msg = charm.packMsg(destObj, args, header)
+            print("MSG before being packed: ", args)
+            args_l = list(args)
+            compressible_idxes = compression_data.compressible_idxes
+            for c in compressible_idxes:
+                print(f"Attempting to compress arg: {c-1}, {args}")
+                # -1 because 'self' was trim
+                args_l[c] = zfpy.compress_numpy(args[c])
+            msg = charm.packMsg(destObj, args_l, header)
             charm.CkArraySend(aid, elemIdx, ep, msg)
         else:
             root, sid = proxy.section
@@ -870,7 +918,14 @@ class Array(object):
             if Options.profiling:
                 f = profile_send_function(array_proxy_method_gen(m.epIdx, argcount, argnames, defaults))
             else:
-                f = array_proxy_method_gen(m.epIdx, argcount, argnames, defaults)
+                print(m.name, argnames)
+                compression_data = CompressionMetadata
+                try:
+                    concrete_em = getattr(m.C, m.name)
+                    compression_data = concrete_em.compression_data
+                except AttributeError:
+                    pass
+                f = array_proxy_method_gen(m.epIdx, argcount, argnames, defaults, compression_data)
             f.__qualname__ = proxyClassName + '.' + m.name
             f.__name__ = m.name
             M[m.name] = f

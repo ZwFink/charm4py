@@ -746,6 +746,7 @@ class CharmLib(object):
           buf_size = <int>size
           msg.setSize(buf_size)
           if typeId == 0:
+            print("Unpacking bytes!")
             args[arg_pos] = bytes(msg)
           elif typeId == 1:
             typecode = rebuildArgs[0]
@@ -753,6 +754,7 @@ class CharmLib(object):
             a.frombytes(msg)
             args[arg_pos] = a
           elif typeId == 2:
+            print("Unpacking numpy!")
             shape, dt = rebuildArgs
             a = np.frombuffer(msg, dtype=np.dtype(dt))  # this does not copy
             a.shape = shape
@@ -775,7 +777,7 @@ class CharmLib(object):
     IF HAVE_NUMPY:
       cdef np.ndarray np_array
     dcopy_size = 0
-    if destObj is not None: # if dest obj is local
+    if False and destObj is not None: # if dest obj is local
       localTag = destObj.__addLocal__((header, msgArgs))
       memcpy(localMsg_ptr+2, &localTag, sizeof(int))
       msg = localMsg
@@ -788,6 +790,7 @@ class CharmLib(object):
       cur_buf = 1
       for i in range(len(args)):
         arg = msgArgs[i]
+        print("ARG: ", arg)
         if isinstance(arg, np.ndarray) and not arg.dtype.hasobject:
           np_array = arg
           nbytes = np_array.nbytes
@@ -798,6 +801,7 @@ class CharmLib(object):
           send_bufs[cur_buf] = <char*>np_array.data
         elif isinstance(arg, bytes):
           nbytes = len(arg)
+          print(f"Backing bytes of len {nbytes}")
           direct_copy_hdr.append((i, 0, (), nbytes))
           send_bufs[cur_buf] = <char*>arg
         elif isinstance(arg, array.array):

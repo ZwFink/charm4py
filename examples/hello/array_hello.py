@@ -1,4 +1,8 @@
-from charm4py import charm, Chare, Array
+from charm4py import charm, Chare, Array, argument_compress
+from typing import NewType
+import numpy as np
+
+Compressible = NewType('Compressible', np.ndarray)
 
 # This example creates a multi-dimensional distributed chare array, and has
 # elements of the array pass a message consecutively from one to the next in
@@ -10,6 +14,12 @@ class Hello(Chare):
     def __init__(self, array_dims):
         self.array_dims = array_dims
 
+    @argument_compress(np.ndarray)
+    def recv_array(self, arr: np.ndarray):
+        print(type(arr))
+        print(f"The array is: {arr}")
+
+    @argument_compress(np.ndarray)
     def sayHi(self, hello_num):
         print('Hi[' + str(hello_num) + '] from element', self.thisIndex, 'on PE', charm.myPe())
         lastIdx = tuple([size-1 for size in self.array_dims])
@@ -43,7 +53,9 @@ def main(args):
     # create a chare array of Hello chares, passing the array dimensions to
     # each element's constructor
     array_proxy = Array(Hello, array_dims, args=[array_dims])
+    a = np.arange(0,20)
     firstIdx = (0,) * len(array_dims)
+    array_proxy[9].recv_array(a)
     # send hello message to the first element
     array_proxy[firstIdx].sayHi(17)
 
