@@ -747,7 +747,6 @@ def argument_compress(*wrap_args, tolerance = -1, rate = -1, precision = -1,
                                                   #rate = rate,
                                                   #precision = precision
                                                   #)
-            print("ARG LIST:",arg_list, "on pe", charm.myPe())
             return em(*arg_list, **kwargs)
         _lossy_compress.compression_data = CompressionMetadata(compressible_idxes,
                                                                tolerance, rate, precision,
@@ -789,11 +788,9 @@ def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data): 
                 array = charm.arrays[aid]
                 if elemIdx in array:
                     destObj = array[elemIdx]
-            print("MSG before being packed: ", args)
             args_l = list(args)
             compressible_idxes = compression_data.compressible_idxes
             for c in compressible_idxes:
-                print(f"Attempting to compress arg: {c-1}, {args}")
                 # -1 because 'self' was trim
                 args_l[c] = zfpy.compress_numpy(args[c])
             msg = charm.packMsg(destObj, args_l, header)
@@ -919,7 +916,6 @@ class Array(object):
             if Options.profiling:
                 f = profile_send_function(array_proxy_method_gen(m.epIdx, argcount, argnames, defaults))
             else:
-                print(m.name, argnames)
                 compression_data = CompressionMetadata([], -1, -1, -1, -1)
                 try:
                     concrete_em = getattr(m.C, m.name)
