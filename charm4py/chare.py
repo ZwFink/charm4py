@@ -6,6 +6,7 @@ import inspect
 import numpy as np
 import zfpy
 from dataclasses import dataclass
+from typing import List
 
 # A Chare class defined by a user can be used in 3 ways: (1) as a Mainchare, (2) to form Groups,
 # (3) to form Arrays. To achieve this, Charm4py can register with the Charm++ library up to 3
@@ -21,7 +22,7 @@ CHARM_TYPES = (MAINCHARE, GROUP, ARRAY)
 
 @dataclass
 class CompressionMetadata:
-    compressible_idxes: list[int]
+    compressible_idxes: List[int]
     tolerance: float
     rate: float
     precision: float
