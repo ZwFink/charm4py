@@ -920,7 +920,7 @@ class Array(object):
                 f = profile_send_function(array_proxy_method_gen(m.epIdx, argcount, argnames, defaults))
             else:
                 print(m.name, argnames)
-                compression_data = CompressionMetadata
+                compression_data = CompressionMetadata([], -1, -1, -1, -1)
                 try:
                     concrete_em = getattr(m.C, m.name)
                     compression_data = concrete_em.compression_data
