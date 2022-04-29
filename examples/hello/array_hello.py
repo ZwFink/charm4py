@@ -14,12 +14,12 @@ class Hello(Chare):
     def __init__(self, array_dims):
         self.array_dims = array_dims
 
-    @argument_compress(np.ndarray)
+    #@argument_compress(np.ndarray)
     def recv_array(self, arr: np.ndarray):
         print(type(arr))
         print(f"The array is: {arr}")
 
-    @argument_compress(np.ndarray)
+    # @argument_compress(np.ndarray)
     def sayHi(self, hello_num):
         print('Hi[' + str(hello_num) + '] from element', self.thisIndex, 'on PE', charm.myPe())
         lastIdx = tuple([size-1 for size in self.array_dims])

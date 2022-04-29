@@ -160,7 +160,7 @@ class Chare(object):
 
     def AtSync(self):
         # NOTE this will fail if called from a chare that is not in an array (as it should be)
-        charm.CkArraySend(self.thisProxy.aid, self.thisIndex, self.thisProxy.AtSync.ep, (b'', []))
+        charm.CkArraySend(self.thisProxy.aid, self.thisIndex, self.thisProxy.AtSync.ep, (b'', []), -1)
 
     def migrate(self, toPe):
         charm.lib.CkMigrate(self.thisProxy.aid, self.thisIndex, toPe)
@@ -754,7 +754,25 @@ def argument_compress(*wrap_args, tolerance = -1, rate = -1, precision = -1,
                                                                )
         return _lossy_compress
     return wrap
-def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data):  # decorator, generates proxy entry methods
+
+def perforate_copy(*wrap_args, skip = 1):
+    perforable_idxes = list()
+    def wrap(em):
+        sig = inspect.signature(em)
+        params = sig.parameters
+
+        for idx, p in enumerate(sig.parameters):
+            type_anno = sig.parameters[p].annotation
+            if type_anno in wrap_args:
+                # -1 because we don't want to include 'self'
+                perforable_idxes.append(idx-1)
+        def _perforate(*args, **kwargs):
+            return em(*args, **kwargs)
+        _perforate.skip = skip
+        return _perforate
+    return wrap
+
+def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data, skip_amt):  # decorator, generates proxy entry methods
     def proxy_entry_method(proxy, *args, **kwargs):
         num_args = len(args)
         if num_args < argcount and len(kwargs) > 0:
@@ -794,7 +812,7 @@ def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data): 
                 # -1 because 'self' was trim
                 args_l[c] = zfpy.compress_numpy(args[c])
             msg = charm.packMsg(destObj, args_l, header)
-            charm.CkArraySend(aid, elemIdx, ep, msg)
+            charm.CkArraySend(aid, elemIdx, ep, msg, skip_amt)
         else:
             root, sid = proxy.section
             header[b'sid'] = sid
@@ -917,12 +935,18 @@ class Array(object):
                 f = profile_send_function(array_proxy_method_gen(m.epIdx, argcount, argnames, defaults))
             else:
                 compression_data = CompressionMetadata([], -1, -1, -1, -1)
+                # default skip_amt
+                skip_amt = -1
+                concrete_em = getattr(m.C, m.name)
                 try:
-                    concrete_em = getattr(m.C, m.name)
                     compression_data = concrete_em.compression_data
                 except AttributeError:
                     pass
-                f = array_proxy_method_gen(m.epIdx, argcount, argnames, defaults, compression_data)
+                try:
+                    skip_amt = concrete_em.skip
+                except AttributeError:
+                    pass
+                f = array_proxy_method_gen(m.epIdx, argcount, argnames, defaults, compression_data, skip_amt)
             f.__qualname__ = proxyClassName + '.' + m.name
             f.__name__ = m.name
             M[m.name] = f

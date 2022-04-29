@@ -277,11 +277,11 @@ class Charm(object):
     def arrayMapProcNum(self, gid, index):
         return self.groups[gid].procNum(index)
 
-    def recvArrayMsg(self, aid, index, ep, msg, dcopy_start):
+    def recvArrayMsg(self, aid, index, ep, msg, dcopy_start, skip_amt=-1):
         # print("Array msg received, aid=" + str(aid) + " arrIndex=" + str(index) + " ep=" + str(ep))
         if index in self.arrays[aid]:
             obj = self.arrays[aid][index]
-            header, args = self.unpackMsg(msg, dcopy_start, obj)
+            header, args = self.unpackMsg(msg, dcopy_start, obj, skip_amt)
             self.invokeEntryMethod(obj, ep, header, args)
         else:
             em = self.entryMethods[ep]

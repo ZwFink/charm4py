@@ -39,7 +39,7 @@ cdef extern from "charm.h":
     void CkGroupExtSend(int gid, int npes, int *pes, int epIdx, char *msg, int msgSize);
     void CkGroupExtSend_multi(int gid, int npes, int *pes, int epIdx, int num_bufs, char **bufs, int *buf_sizes);
     void CkArrayExtSend(int aid, int *idx, int ndims, int epIdx, char *msg, int msgSize);
-    void CkArrayExtSend_multi(int aid, int *idx, int ndims, int epIdx, int num_bufs, char **bufs, int *buf_sizes);
+    void CkArrayExtSend_multi(int aid, int *idx, int ndims, int epIdx, int num_bufs, char **bufs, int *buf_sizes, int skip_amt);
     void CkForwardMulticastMsg(int gid, int num_children, int *children);
 
     int CkGroupGetReductionNumber(int gid);
@@ -51,7 +51,7 @@ cdef extern from "charm.h":
     void registerReadOnlyRecvExtCallback(void (*cb)(int, char*));
     void registerChareMsgRecvExtCallback(void (*cb)(int, void*, int, int, char*, int));
     void registerGroupMsgRecvExtCallback(void (*cb)(int, int, int, char *, int));
-    void registerArrayMsgRecvExtCallback(void (*cb)(int, int, int *, int, int, char *, int));
+    void registerArrayMsgRecvExtCallback(void (*cb)(int, int, int *, int, int, char *, int, int));
     void registerArrayBcastRecvExtCallback(void (*cb)(int, int, int, int, int *, int, int, char *, int));
     void registerArrayElemLeaveExtCallback(int (*cb)(int, int, int *, char**, int));
     void registerArrayElemJoinExtCallback(void (*cb)(int, int, int *, int, char*, int));

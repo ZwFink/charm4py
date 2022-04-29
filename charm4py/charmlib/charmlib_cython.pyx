@@ -2,6 +2,7 @@ from ccharm cimport *
 from libc.stdlib cimport malloc, free
 from libc.string cimport memcpy
 from libc.stdint cimport uintptr_t
+from libc.math cimport ceil
 from cpython.version cimport PY_MAJOR_VERSION
 from cpython.buffer  cimport PyObject_GetBuffer, PyBuffer_Release, PyBUF_ANY_CONTIGUOUS, PyBUF_SIMPLE
 from cpython.tuple   cimport PyTuple_New, PyTuple_SET_ITEM
@@ -31,6 +32,9 @@ ELSE:
 
 cdef object np_number = np.number
 
+# assumes that n % 8 = 0
+cdef int perforated_size(int n, int s):
+  return 8*<int>ceil((n)*(1-(1/<double>(s+1))))
 
 # ------ global constants ------
 
@@ -449,7 +453,7 @@ class CharmLib(object):
       CkGroupExtSend_multi(group_id, num_pes, section_children, ep, cur_buf, send_bufs, send_buf_sizes)
       cur_buf = 1
 
-  def CkArraySend(self, int array_id, index not None, int ep, msg not None):
+  def CkArraySend(self, int array_id, index not None, int ep, msg not None, skip_amt: int):
     global cur_buf
     msg0, dcopy = msg
     cdef int ndims = len(index)
@@ -460,7 +464,7 @@ class CharmLib(object):
     else:
       send_bufs[0]      = <char*>msg0
       send_buf_sizes[0] = <int>len(msg0)
-      CkArrayExtSend_multi(array_id, c_index, ndims, ep, cur_buf, send_bufs, send_buf_sizes)
+      CkArrayExtSend_multi(array_id, c_index, ndims, ep, cur_buf, send_bufs, send_buf_sizes, skip_amt)
       cur_buf = 1
 
   def sendToSection(self, int gid, list children):
@@ -729,10 +733,11 @@ class CharmLib(object):
     CmiGetPesOnPhysicalNode(node, &pelist, &numpes)
     return [pelist[i] for i in range(numpes)]
 
-  def unpackMsg(self, ReceiveMsgBuffer msg not None, int dcopy_start, dest_obj):
+  def unpackMsg(self, ReceiveMsgBuffer msg not None, int dcopy_start, dest_obj, skip_amt = -1):
     cdef int i = 0
     cdef int buf_size
     cdef int typeId
+    cdef int perf_size
     if msg.isLocal():
       header, args = dest_obj.__removeLocal__(msg.getLocalTag())
     else:
@@ -744,7 +749,11 @@ class CharmLib(object):
           arg_pos, tid, rebuildArgs, size = dcopy_list[i]
           typeId = <int>tid
           buf_size = <int>size
-          msg.setSize(buf_size)
+          if skip_amt == -1:
+            msg.setSize(buf_size)
+          else:
+            perf_size = perforated_size(size, skip_amt)
+            msg.setSize(perf_size)
           if typeId == 0:
             args[arg_pos] = bytes(msg)
           elif typeId == 1:
@@ -755,7 +764,11 @@ class CharmLib(object):
           elif typeId == 2:
             shape, dt = rebuildArgs
             a = np.frombuffer(msg, dtype=np.dtype(dt))  # this does not copy
-            a.shape = shape
+            if skip_amt == -1:
+              a.shape = shape
+            else:
+              # // 8 because perf_size is in bytes
+              a.shape = (perf_size//8,)
             args[arg_pos] = a.copy()
           else:
             raise Charm4PyError("unpackMsg: wrong type id received")
@@ -867,13 +880,13 @@ cdef void recvGroupMsg(int gid, int ep, int msgSize, char *msg, int dcopy_start)
   except:
     charm.handleGeneralError()
 
-cdef void recvArrayMsg(int aid, int ndims, int *arrayIndex, int ep, int msgSize, char *msg, int dcopy_start):
+cdef void recvArrayMsg(int aid, int ndims, int *arrayIndex, int ep, int msgSize, char *msg, int dcopy_start, int skip_amt):
   try:
     if PROFILING:
       charm._precvtime = time.time()
       charm.recordReceive(msgSize)
     recv_buffer.setMsg(msg, msgSize)
-    charm.recvArrayMsg(aid, array_index_to_tuple(ndims, arrayIndex), ep, recv_buffer, dcopy_start)
+    charm.recvArrayMsg(aid, array_index_to_tuple(ndims, arrayIndex), ep, recv_buffer, dcopy_start, skip_amt)
   except:
     charm.handleGeneralError()
 
