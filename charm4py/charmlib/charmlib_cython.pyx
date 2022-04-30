@@ -752,7 +752,7 @@ class CharmLib(object):
           if skip_amt == -1:
             msg.setSize(buf_size)
           else:
-            perf_size = perforated_size(size, skip_amt)
+            perf_size = perforated_size(size//8, skip_amt)
             msg.setSize(perf_size)
           if typeId == 0:
             args[arg_pos] = bytes(msg)
