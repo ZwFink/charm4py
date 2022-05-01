@@ -2,12 +2,13 @@ from ccharm cimport *
 from libc.stdlib cimport malloc, free
 from libc.string cimport memcpy
 from libc.stdint cimport uintptr_t
-from libc.math cimport ceil
+from libc.math cimport floor
 from cpython.version cimport PY_MAJOR_VERSION
 from cpython.buffer  cimport PyObject_GetBuffer, PyBuffer_Release, PyBUF_ANY_CONTIGUOUS, PyBUF_SIMPLE
 from cpython.tuple   cimport PyTuple_New, PyTuple_SET_ITEM
 from cpython.int cimport PyInt_FromSsize_t
 from cpython.ref cimport Py_INCREF
+cimport cython
 
 from ..charm import Charm4PyError
 from .. import reduction as red
@@ -33,8 +34,10 @@ ELSE:
 cdef object np_number = np.number
 
 # assumes that n % 8 = 0
+# NOTE: Assumes that n is size in double, not in bytes
+@cython.cdivision(True) # Turn off Python divide-by-zero/none checks for division
 cdef int perforated_size(int n, int s):
-  return 8*<int>ceil((n)*(1-(1/<double>(s+1))))
+  return 8*<int>floor((n)*(1-(1/<double>(s+1))))
 
 # ------ global constants ------
 
@@ -46,6 +49,35 @@ cdef enum:
 
 cdef enum:
   MAX_INDEX_LEN = 10    # max dimensions supported for array index
+
+@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.wraparound(False)  # turn off negative index wrapping for entire function
+@cython.cdivision(True) # Turn off Python divide-by-zero/none checks for division
+cdef unpack_perforated_msg(double[::1] inflated_dest,
+                           double[::1] perforated_src,
+                           int skip_amt
+                           ):
+  cdef int i
+  cdef int j
+  cdef int transferred_blocks = 0
+  cdef int total_copied = 0
+  cdef int idx = 0
+  cdef int thisblock = 0
+  cdef int inflated_len = len(inflated_dest)
+  cdef int perforated_len = len(perforated_src)
+  cdef int nblocks = perforated_len / skip_amt
+  cdef int partial_block = inflated_len % (skip_amt+1)
+
+  for thisblock in range(nblocks):
+    i = thisblock*skip_amt
+    for j in range(i, i+skip_amt):
+      if j < perforated_len:
+        inflated_dest[j+transferred_blocks] = perforated_src[j]
+    if skip_amt+i+transferred_blocks < inflated_len:
+      inflated_dest[skip_amt+i+transferred_blocks] = 0.5*(perforated_src[skip_amt+i-1] + perforated_src[skip_amt+i-2])
+    transferred_blocks += 1
+  for i in range(partial_block):
+    inflated_dest[transferred_blocks+(transferred_blocks*skip_amt)+i] = perforated_src[(transferred_blocks*skip_amt)+i]
 
 # ----- reduction data structures ------
 
@@ -764,12 +796,15 @@ class CharmLib(object):
           elif typeId == 2:
             shape, dt = rebuildArgs
             a = np.frombuffer(msg, dtype=np.dtype(dt))  # this does not copy
-            if skip_amt == -1:
-              a.shape = shape
+            if skip_amt != -1:
+              true_a = np.ndarray((size//8,), dtype=np.dtype(dt))
+              unpack_perforated_msg(true_a, a, skip_amt)
+              true_a.shape = shape
+              # true_a is already a copy
+              args[arg_pos] = true_a
             else:
-              # // 8 because perf_size is in bytes
-              a.shape = (perf_size//8,)
-            args[arg_pos] = a.copy()
+              a.shape = shape
+              args[arg_pos] = a.copy()
           else:
             raise Charm4PyError("unpackMsg: wrong type id received")
           msg.advance(buf_size)
