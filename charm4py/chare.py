@@ -755,7 +755,7 @@ def argument_compress(*wrap_args, tolerance = -1, rate = -1, precision = -1,
         return _lossy_compress
     return wrap
 
-def perforate_copy(*wrap_args, skip = 1):
+def perforate_copy(*wrap_args, skip = -1):
     perforable_idxes = list()
     def wrap(em):
         sig = inspect.signature(em)
