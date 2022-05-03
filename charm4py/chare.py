@@ -747,7 +747,7 @@ def array_proxy_method_gen(ep, argcount, argnames, defaults):  # decorator, gene
                 array = charm.arrays[aid]
                 if elemIdx in array:
                     destObj = array[elemIdx]
-            msg = charm.packMsg(destObj, args, header)
+            msg = charm.packMsg_P(destObj, args, header)
             charm.CkArraySend(aid, elemIdx, ep, msg)
         else:
             root, sid = proxy.section

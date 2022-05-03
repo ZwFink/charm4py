@@ -28,6 +28,7 @@ from .threads import Future, LocalFuture
 from . import reduction
 from . import wait
 import array
+sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
 try:
     import numpy
 except ImportError:
@@ -127,6 +128,8 @@ class Charm(object):
         self.entry_func = None
         if self.lib.name == 'cython':
             # replace these methods with the fast Cython versions
+            self.packMsg_P = self.lib.packMsg_OOBPickle
+            self.unpackMsg_P = self.lib.unpackMsg_OOBPickle
             self.packMsg = self.lib.packMsg
             self.unpackMsg = self.lib.unpackMsg
         self.interactive = False
@@ -249,10 +252,12 @@ class Charm(object):
 
     def recvGroupMsg(self, gid, ep, msg, dcopy_start):
         if gid in self.groups:
+            print("Unpacking group message, non-init")
             obj = self.groups[gid]
             header, args = self.unpackMsg(msg, dcopy_start, obj)
             self.invokeEntryMethod(obj, ep, header, args)
         else:
+            print("Unpacking group message, init")
             em = self.entryMethods[ep]
             header, args = self.unpackMsg(msg, dcopy_start, None)
             if em.name != '__init__':
@@ -280,10 +285,15 @@ class Charm(object):
     def recvArrayMsg(self, aid, index, ep, msg, dcopy_start):
         # print("Array msg received, aid=" + str(aid) + " arrIndex=" + str(index) + " ep=" + str(ep))
         if index in self.arrays[aid]:
+            # from pudb.remote import set_trace
+            # set_trace(term_size=(80, 24))
+            print("Received array message (non-init)")
+            print("Dcopy start is: ", dcopy_start)
             obj = self.arrays[aid][index]
-            header, args = self.unpackMsg(msg, dcopy_start, obj)
+            header, args = self.unpackMsg_P(msg, dcopy_start, obj)
             self.invokeEntryMethod(obj, ep, header, args)
         else:
+            print("Received array message (init)")
             em = self.entryMethods[ep]
             assert em.name == '__init__', 'Specified array entry method not constructor'
             header, args = self.unpackMsg(msg, dcopy_start, None)

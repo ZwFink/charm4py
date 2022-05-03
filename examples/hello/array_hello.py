@@ -5,6 +5,7 @@ from charm4py import charm, Chare, Array
 # row-major order
 
 
+
 class Hello(Chare):
 
     def __init__(self, array_dims):

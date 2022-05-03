@@ -215,6 +215,7 @@ cdef class ReceiveMsgBuffer:
   cdef Py_ssize_t shape[1]
   cdef Py_ssize_t strides[1]
   cdef char *msg
+  cdef int total_offset
 
   def __cinit__(self):
     self.strides[0] = 1
@@ -264,6 +265,69 @@ cdef class ReceiveMsgBuffer:
 
   def __releasebuffer__(self, Py_buffer *buffer):
     pass
+
+cdef class DirectCopyBufferProvider:
+
+  cdef Py_ssize_t shape[1]
+  cdef Py_ssize_t strides[1]
+  cdef char *msg
+  cdef int total_offset
+  cdef int begin_offset
+
+  def __cinit__(self, int begin_offset):
+    self.strides[0] = 1
+    self.shape[0] = 0
+    self.msg = NULL
+    self.total_offset = 0
+    self.begin_offset = begin_offset
+    self.advance(begin_offset)
+    print("Begin offset is:", begin_offset)
+
+  cdef inline void setMsg(self, char *_msg, int _msgSize):
+    self.msg = _msg
+    self.shape[0] = _msgSize
+
+  cdef inline void setSize(self, int size):
+    self.shape[0] = size
+
+  cdef inline void advance(self, int offset):
+    self.total_offset += offset
+    self.msg += offset
+
+  def __iter__(self):
+    return self
+  def __next__(self):
+    if self.begin_offset == 0:
+      raise StopIteration
+    #note: assumes self.msg is pointing at the size of a dcopy object
+    cdef int offset = <int>self.msg
+    print(f"Total offset: {self.total_offset}, shape: {self.shape[0]}")
+    if self.total_offset < self.shape[0]:
+      # TODO: comment this
+      self.advance(offset)
+      return self
+    else:
+      raise StopIteration
+
+  def __len__(self):
+    return self.shape[0]
+
+  def __getbuffer__(self, Py_buffer *buffer, int flags):
+    buffer.buf = self.msg
+    buffer.format = 'b'
+    buffer.internal = NULL
+    buffer.itemsize = sizeof(char)
+    buffer.len = self.shape[0]
+    buffer.ndim = 1
+    buffer.obj = self
+    buffer.readonly = 1
+    buffer.shape = self.shape
+    buffer.strides = self.strides
+    buffer.suboffsets = NULL                # for pointer arrays only
+
+  def __releasebuffer__(self, Py_buffer *buffer):
+    pass
+
 
 #  cdef inline bytes tobytes(self):  # this copies msg into a bytes object
 #    return <bytes>self.msg[0:self.shape[0]]
@@ -412,10 +476,14 @@ class CharmLib(object):
 
   def CkChareSend(self, tuple chare_id not None, int ep, msg not None):
     global cur_buf
+    cdef int dcopy_start = 0
     msg0, dcopy = msg
     objPtr = <void*>(<uintptr_t>chare_id[1])
+
+    if dcopy != 0:
+      dcopy_start = len(msg0)
     if cur_buf <= 1:
-      CkChareExtSend(<int>chare_id[0], objPtr, ep, msg0, len(msg0))
+      CkChareExtSend(<int>chare_id[0], objPtr, ep, msg0, dcopy_start)
     else:
       send_bufs[0]      = <char*>msg0
       send_buf_sizes[0] = <int>len(msg0)
@@ -425,8 +493,12 @@ class CharmLib(object):
   def CkGroupSend(self, int group_id, int index, int ep, msg not None):
     global cur_buf
     msg0, dcopy = msg
+    print("msg0", msg0, "dcopy", dcopy)
+    cdef int dcopy_start = 0
+    if dcopy != 0:
+      dcopy_start = len(msg0)
     if cur_buf <= 1:
-      CkGroupExtSend(group_id, 1, &index, ep, msg0, len(msg0))
+      CkGroupExtSend(group_id, 1, &index, ep, msg0, dcopy_start)
     else:
       send_bufs[0]      = <char*>msg0
       send_buf_sizes[0] = <int>len(msg0)
@@ -436,13 +508,17 @@ class CharmLib(object):
   def CkGroupSendMulti(self, int group_id, list pes, int ep, msg not None):
     cdef int num_pes
     cdef int i = 0
-    global cur_buf
+    cdef int dcopy_start = 0
     msg0, dcopy = msg
+    global cur_buf
     num_pes = len(pes)
+
+    if dcopy != 0:
+      dcopy_start = len(msg0)
     assert num_pes < SECTION_MAX_BFACTOR
     for i in range(num_pes): section_children[i] = pes[i]
     if cur_buf <= 1:
-      CkGroupExtSend(group_id, num_pes, section_children, ep, msg0, len(msg0))
+      CkGroupExtSend(group_id, num_pes, section_children, ep, msg0, dcopy_start)
     else:
       send_bufs[0]      = <char*>msg0
       send_buf_sizes[0] = <int>len(msg0)
@@ -454,9 +530,13 @@ class CharmLib(object):
     msg0, dcopy = msg
     cdef int ndims = len(index)
     cdef int i = 0
+    cdef int dcopy_start = 0
     for i in range(ndims): c_index[i] = index[i]
+
+    if dcopy != 0:
+      dcopy_start = len(msg0)
     if cur_buf <= 1:
-      CkArrayExtSend(array_id, c_index, ndims, ep, msg0, len(msg0))
+      CkArrayExtSend(array_id, c_index, ndims, ep, msg0, dcopy_start)
     else:
       send_bufs[0]      = <char*>msg0
       send_buf_sizes[0] = <int>len(msg0)
@@ -729,6 +809,50 @@ class CharmLib(object):
     CmiGetPesOnPhysicalNode(node, &pelist, &numpes)
     return [pelist[i] for i in range(numpes)]
 
+  def unpackMsg_OOBPickle(self, ReceiveMsgBuffer msg not None, int dcopy_start, dest_obj):
+    cdef int i = 0
+    cdef int buf_size
+    cdef int typeId
+    if False and msg.isLocal():
+      print("Unpacking local message")
+      header, args = dest_obj.__removeLocal__(msg.getLocalTag())
+    else:
+      d_copy_iter = DirectCopyBufferProvider(dcopy_start)
+      PyObject_GetBuffer(msg, <Py_buffer*> d_copy_iter, 0)
+
+      header, args = loads(msg, buffers = d_copy_iter)
+      return header, args
+      if b'dcopy' in header:
+        msg.advance(dcopy_start)
+        dcopy_list = header[b'dcopy']
+        for i in range(len(dcopy_list)):
+          arg_pos, tid, rebuildArgs, size = dcopy_list[i]
+          typeId = <int>tid
+          buf_size = <int>size
+          msg.setSize(buf_size)
+          if typeId == 0:
+            args[arg_pos] = bytes(msg)
+          elif typeId == 1:
+            typecode = rebuildArgs[0]
+            a = array.array(typecode)
+            a.frombytes(msg)
+            args[arg_pos] = a
+          elif typeId == 2:
+            shape, dt = rebuildArgs
+            a = np.frombuffer(msg, dtype=np.dtype(dt))  # this does not copy
+            a.shape = shape
+            args[arg_pos] = a.copy()
+          else:
+            raise Charm4PyError("unpackMsg: wrong type id received")
+          msg.advance(buf_size)
+      elif b"custom_reducer" in header:
+        reducer = getattr(charm.reducers, header[b"custom_reducer"])
+        # reduction result won't always be in position 0, but will always be last
+        # (e.g. if reduction target is a future, the reduction result will be 2nd argument)
+        if reducer.hasPostprocess: args[-1] = reducer.postprocess(args[-1])
+
+    return header, args
+
   def unpackMsg(self, ReceiveMsgBuffer msg not None, int dcopy_start, dest_obj):
     cdef int i = 0
     cdef int buf_size
@@ -767,6 +891,36 @@ class CharmLib(object):
         if reducer.hasPostprocess: args[-1] = reducer.postprocess(args[-1])
 
     return header, args
+
+  def packMsg_OOBPickle(self, destObj, msgArgs not None, dict header):
+    cdef int i = 0
+    cdef int localTag
+    cdef array.array a
+    cdef char[:] b_buf
+    IF HAVE_NUMPY:
+      cdef np.ndarray np_array
+    dcopy_size = 0
+    direct_copy_hdr = []  # goes to header
+    # if destObj is not None: # if dest obj is local
+    #   print("It's local")
+    #   localTag = destObj.__addLocal__((header, msgArgs))
+    #   memcpy(localMsg_ptr+2, &localTag, sizeof(int))
+    #   msg = localMsg
+    if False and len(msgArgs) == 0 and len(header) == 0:
+      msg = emptyMsg
+    else:
+      args = list(msgArgs)
+      global cur_buf
+      cur_buf = 1
+      msg = dumps((header, msgArgs), protocol=5, buffer_callback=direct_copy_hdr.append)
+      print(msgArgs, direct_copy_hdr)
+      for i in range(len(direct_copy_hdr)):
+        b_buf = direct_copy_hdr[i].raw()
+        send_bufs[cur_buf] = <char*>&b_buf[0]
+        send_buf_sizes[cur_buf] = len(b_buf)
+        print(f"Buffer of size {len(b_buf)}")
+    if PROFILING: charm.recordSend(len(msg) + dcopy_size)
+    return msg, len(direct_copy_hdr) != 0
 
   def packMsg(self, destObj, msgArgs not None, dict header):
     cdef int i = 0
