@@ -743,10 +743,7 @@ def argument_compress(*wrap_args, tolerance = -1, rate = -1, precision = -1,
             arg_list = list(args)
             for l in compressible_idxes:
                 # we have to account for the offset
-                arg_list[l+1] = zfpy.decompress_numpy(args[l+1])#, tolerance = tolerance,
-                                                  #rate = rate,
-                                                  #precision = precision
-                                                  #)
+                arg_list[l+1] = zfpy.decompress_numpy(args[l+1])
             return em(*arg_list, **kwargs)
         _lossy_compress.compression_data = CompressionMetadata(compressible_idxes,
                                                                tolerance, rate, precision,
@@ -810,7 +807,10 @@ def array_proxy_method_gen(ep, argcount, argnames, defaults, compression_data, s
             compressible_idxes = compression_data.compressible_idxes
             for c in compressible_idxes:
                 # -1 because 'self' was trim
-                args_l[c] = zfpy.compress_numpy(args[c])
+                args_l[c] = zfpy.compress_numpy(args[c], rate=compression_data.rate,
+                                                tolerance = compression_data.tolerance,
+                                                precision = compression_data.precision
+                                                )
             msg = charm.packMsg(destObj, args_l, header)
             charm.CkArraySend(aid, elemIdx, ep, msg, skip_amt)
         else:
